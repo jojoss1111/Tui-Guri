@@ -2,23 +2,19 @@
 
 > Biblioteca C para criar interfaces de terminal (TUI) com cores, caixas, menus e animações de texto.
 > Funciona em **Linux**, **macOS** e **Windows** com suporte completo a UTF-8 e cores ANSI 256.
-> Pode ser usada diretamente em **C** ou como **módulo Python** via Cython.
 
 ---
 
 ## Sumário
 
 1. [Como funciona](#como-funciona)
-2. [Compilando](#compilando)
-3. [Começando em C — Exemplo mínimo](#começando-em-c--exemplo-mínimo)
-4. [Começando em Python — Exemplo mínimo](#começando-em-python--exemplo-mínimo)
-5. [Renderer / Renderizador](#renderer--renderizador)
-6. [Interface](#interface)
-7. [Inputs / Entradas](#inputs--entradas)
-8. [Cores](#cores)
-9. [Constantes e Teclas](#constantes-e-teclas)
-10. [Referência rápida — C](#referência-rápida--c)
-11. [Referência rápida — Python](#referência-rápida--python)
+2. [Começando — Exemplo mínimo](#começando--exemplo-mínimo)
+3. [Renderer](#renderer)
+4. [Interface](#interface)
+5. [Inputs](#inputs)
+6. [Cores](#cores)
+7. [Constantes e Teclas](#constantes-e-teclas)
+8. [Referência rápida](#referência-rápida)
 
 ---
 
@@ -42,73 +38,7 @@ O fluxo básico é sempre:
 
 ---
 
-## Compilando
-
-O projeto usa um `Makefile` com dois alvos principais:
-
-### `make C-tui` — Biblioteca estática C
-
-Compila `tui_api.c` e gera `libtui.a`. Use para linkar em projetos C.
-
-```bash
-make C-tui
-```
-
-Para compilar e rodar um programa C diretamente:
-
-```bash
-# Linux / macOS
-gcc main.c tui_api.c -o meu_programa
-./meu_programa
-
-# Windows (MinGW)
-gcc main.c tui_api.c -o meu_programa.exe
-meu_programa.exe
-
-# Linkando com a biblioteca estática (após make C-tui)
-gcc main.c -L. -ltui -o meu_programa
-```
-
----
-
-### `make P-tui` — Módulo Python (Cython)
-
-Compila o wrapper Cython e gera `tui.*.so` (Linux/macOS) ou `tui.*.pyd` (Windows), que pode ser importado diretamente no Python.
-
-**Pré-requisitos:**
-```bash
-pip install cython setuptools
-```
-
-**Compilando:**
-```bash
-make P-tui
-```
-
-Isso roda internamente:
-```bash
-python setup.py build_ext --inplace
-```
-
-Após compilar, importe normalmente:
-```python
-import tui
-```
-
-> O arquivo `.so`/`.pyd` gerado deve estar na mesma pasta do seu script Python,
-> ou em um diretório que esteja no `sys.path`.
-
----
-
-### Limpeza
-
-```bash
-make clean   # remove libtui.a, tui.*.so, build/, __pycache__ e demais artefatos
-```
-
----
-
-## Começando em C — Exemplo mínimo
+## Começando — Exemplo mínimo
 
 ```c
 #include "tui_api.h"
@@ -159,129 +89,88 @@ int main(void) {
 }
 ```
 
----
+**Compilando no Linux:**
+```bash
+gcc main.c tui_api.c -o meu_programa
+./meu_programa
+```
 
-## Começando em Python — Exemplo mínimo
-
-```python
-import tui
-
-r  = tui.Renderizador()
-ui = tui.Interface()
-en = tui.Entradas()
-
-# Limpa a tela
-r.limpar_tudo()
-
-# Desenha uma caixa com título e texto
-ui.desenhar_caixa(r,
-    x=2, y=2,
-    altura=5, largura=40,
-    titulo="Olá Mundo",
-    conteudo="Bem-vindo à TUI Guri!\nUse as setas para navegar.",
-    ascii_art=False,
-    cor_fundo="\033[40m",
-    cor_borda="\033[36m",
-    cor_texto="\033[97m",
-)
-r.renderizar()
-
-# Menu simples
-opcoes = ["Jogar", "Opções", "Sair"]
-escolha = en.menu_vertical(r,
-    x=2, y=9,
-    opcoes=opcoes,
-    fundo_normal="\033[40m",    texto_normal="\033[90m",
-    fundo_selecionado="\033[44m", texto_selecionado="\033[97m",
-    fundo_confirmado="\033[42m",  texto_confirmado="\033[30m",
-)
-
-# Limpa e mostra resultado
-r.limpar_tudo()
-ui.texto(r, x=2, y=2,
-    texto=f"Você escolheu: {opcoes[escolha]}",
-    cor_texto="\033[97m",
-)
-r.renderizar()
+**Compilando no Windows (MinGW):**
+```bash
+gcc main.c tui_api.c -o meu_programa.exe
+meu_programa.exe
 ```
 
 ---
 
-## Renderer / Renderizador
+## Renderer
 
-O `Renderer` é o núcleo da biblioteca. Ele acumula todo o texto e sequências ANSI num buffer interno e só envia para o terminal quando você chama `renderer_render()` / `.renderizar()`. Isso elimina o piscar (flickering) comum em aplicações TUI.
+O `Renderer` é o núcleo da biblioteca. Ele acumula todo o texto e sequências ANSI num buffer interno e só envia para o terminal quando você chama `renderer_render()`. Isso elimina o piscar (flickering) comum em aplicações TUI.
 
-### Criação
+### Criação e destruição
 
 ```c
-// C
+Renderer* renderer_create(void);
+void      renderer_destroy(Renderer* r);
+```
+
+- `renderer_create` — aloca o buffer (64 KB inicial, expande automaticamente), ativa o raw mode no Linux/macOS e configura UTF-8 no Windows.
+- `renderer_destroy` — libera o buffer e restaura o terminal ao estado original.
+
+```c
 Renderer* r = renderer_create();
+// ... usa o renderer ...
 renderer_destroy(r);
 ```
-
-```python
-# Python
-r = tui.Renderizador()
-# destruído automaticamente pelo garbage collector
-```
-
-`renderer_create` / `Renderizador()` — aloca o buffer (64 KB inicial, expande automaticamente), ativa o raw mode no Linux/macOS e configura UTF-8 no Windows.
 
 ### Adicionar conteúdo ao buffer
 
 ```c
-// C
 void renderer_add(Renderer* r, const char* content);
 void renderer_add_raw(Renderer* r, const char* dados, size_t tamanho);
 ```
 
-```python
-# Python
-r.adicionar("texto ou \033[32msequência ANSI\033[0m")
-r.adicionar_bruto(b"\x1b[32m")   # bytes brutos
+- `renderer_add` — adiciona uma string (com `\0` terminador) ao buffer.
+- `renderer_add_raw` — adiciona exatamente `tamanho` bytes, útil para strings UTF-8 ou dados binários.
+
+```c
+renderer_add(r, "\033[32m");   // ativa cor verde
+renderer_add(r, "Texto verde");
+renderer_add(r, "\033[0m");    // reseta cores
 ```
 
 ### Mover o cursor
 
 ```c
-// C — (y=linha, x=coluna)
-renderer_move_cursor(r, 5, 10);
+void renderer_move_cursor(Renderer* r, int y, int x);
 ```
 
-```python
-# Python — (linha, coluna)
-r.mover_cursor(5, 10)
-```
+Adiciona ao buffer a sequência ANSI que move o cursor para a linha `y` e coluna `x`. **Atenção:** no terminal, linhas e colunas começam em `1`, não em `0`.
 
-> **Atenção:** no terminal, linhas e colunas começam em `1`, não em `0`.
+```c
+renderer_move_cursor(r, 5, 10);  // move para linha 5, coluna 10
+renderer_add(r, "Aqui!");
+```
 
 ### Enviar para a tela
 
 ```c
-// C
-renderer_render(r);
+void renderer_render(Renderer* r);
 ```
 
-```python
-# Python
-r.renderizar()
-```
-
-Descarrega o buffer inteiro no terminal e o zera. Chame sempre que quiser que o usuário veja as mudanças.
+Escreve todo o conteúdo acumulado no terminal e zera o buffer. Chame sempre que quiser que o usuário veja as mudanças.
 
 ### Limpar a tela completamente
 
 ```c
-// C
-clear_abs(r);
+void clear_abs(Renderer* r);
 ```
 
-```python
-# Python
-r.limpar_tudo()
-```
+Apaga toda a tela, reseta as cores e move o cursor para o início. Internamente chama `renderer_render` automaticamente.
 
-Apaga toda a tela, reseta as cores e move o cursor para o início.
+```c
+clear_abs(r);  // tela limpa, pronta para começar
+```
 
 ---
 
@@ -289,55 +178,89 @@ Apaga toda a tela, reseta as cores e move o cursor para o início.
 
 O módulo `Interface` oferece funções de alto nível para desenhar elementos visuais: caixas com bordas, texto com animação de digitação, e texto simples posicionado.
 
-### Criação
+### Criação e destruição
 
 ```c
-// C
-Interface* ui = interface_create();
-interface_destroy(ui);
+Interface* interface_create(void);
+void       interface_destroy(Interface* i);
 ```
 
-```python
-# Python
-ui = tui.Interface()
+```c
+Interface* ui = interface_create();
+// ...
+interface_destroy(ui);
 ```
 
 ### Medir texto visível
 
 ```c
-// C
-int len = interface_visible_len("\033[32mOlá\033[0m");  // retorna 3
+int interface_visible_len(const char* s);
 ```
 
-```python
-# Python
-tamanho = ui.comprimento_visivel("\033[32mOlá\033[0m")  # retorna 3
+Retorna o número de caracteres **visíveis** de uma string, ignorando sequências de escape ANSI. Útil para calcular alinhamento.
+
+```c
+const char* s = "\033[32mOlá\033[0m";
+int len = interface_visible_len(s);  // retorna 3, não 14
 ```
 
-Retorna o número de caracteres visíveis, ignorando sequências ANSI.
+### Mover cursor (via Interface)
+
+```c
+void interface_move_cursor(Renderer* r, int y, int x);
+```
+
+Equivalente a `renderer_move_cursor`. Existe nos dois módulos por conveniência.
 
 ### Limpar uma região
 
 ```c
-// C
-interface_clear(ui, r, x, y, height, width, "\033[40m");
+void interface_clear(Interface* ui, Renderer* r,
+                     int x, int y, int height, int width,
+                     const char* bg_color);
+```
+
+Preenche com espaços a região `(x, y)` de tamanho `(width+2) × (height+2)` na cor de fundo especificada. Útil para apagar uma caixa antes de redesenhá-la.
+
+| Parâmetro  | Descrição |
+|------------|-----------|
+| `x, y`     | Coluna e linha do canto superior esquerdo |
+| `height`   | Altura da região |
+| `width`    | Largura da região |
+| `bg_color` | Sequência ANSI de fundo (ex: `"\033[40m"`). Se `NULL`, usa preto. |
+
+```c
+// Limpa uma área de 5 linhas × 30 colunas na posição (2, 2)
+interface_clear(ui, r, 2, 2, 5, 30, "\033[40m");
 renderer_render(r);
 ```
-
-```python
-# Python
-ui.limpar(r, x=2, y=2, altura=5, largura=30, cor_fundo="\033[40m")
-r.renderizar()
-```
-
-Preenche com espaços a região `(x, y)` de tamanho `(largura+2) × (altura+2)` na cor de fundo especificada. Útil para apagar uma caixa antes de redesenhá-la.
 
 ### Desenhar caixa com conteúdo
 
 ```c
-// C
-interface_draw(ui, r,
-    2, 2, 8, 40,
+void interface_draw(Interface* ui, Renderer* r,
+                    int x, int y, int height, int width,
+                    const char* title, const char* content, bool ascii_art,
+                    const char* bg_color, const char* border_color, const char* text_color);
+```
+
+Desenha uma caixa com **borda dupla** (╔═╗║╚╝), título opcional no topo e conteúdo com quebra de linha automática.
+
+| Parâmetro      | Descrição |
+|----------------|-----------|
+| `x, y`         | Posição do canto superior esquerdo |
+| `height`       | Número de linhas de conteúdo (sem contar bordas) |
+| `width`        | Largura interna em caracteres (sem contar bordas) |
+| `title`        | Texto exibido no topo da borda. `NULL` para sem título. |
+| `content`      | Texto do conteúdo. `NULL` ou `""` para caixa vazia. |
+| `ascii_art`    | `true` = respeita `\n` sem quebrar palavras. `false` = word-wrap automático. |
+| `bg_color`     | Cor de fundo ANSI. `NULL` = sem fundo. |
+| `border_color` | Cor da borda ANSI. `NULL` = branco. |
+| `text_color`   | Cor do texto ANSI. `NULL` = branco. |
+
+```c
+// Caixa simples
+interface_draw(ui, r, 2, 2, 8, 40,
     "Status",
     "HP: 100/100\nMP: 50/50\nGold: 320",
     false,
@@ -346,78 +269,64 @@ interface_draw(ui, r,
 renderer_render(r);
 ```
 
-```python
-# Python
-ui.desenhar_caixa(r,
-    x=2, y=2, altura=8, largura=40,
-    titulo="Status",
-    conteudo="HP: 100/100\nMP: 50/50\nGold: 320",
-    ascii_art=False,
-    cor_fundo="\033[40m",
-    cor_borda="\033[33m",
-    cor_texto="\033[97m",
-)
-r.renderizar()
-```
-
-Desenha uma caixa com **borda dupla** (╔═╗║╚╝), título opcional no topo e conteúdo com quebra de linha automática.
-
-| Parâmetro C      | Parâmetro Python  | Descrição |
-|------------------|-------------------|-----------|
-| `x, y`           | `x, y`            | Posição do canto superior esquerdo |
-| `height`         | `altura`          | Linhas de conteúdo (sem bordas) |
-| `width`          | `largura`         | Colunas internas (sem bordas) |
-| `title`          | `titulo`          | Texto no topo da borda. `NULL`/`None` = sem título |
-| `content`        | `conteudo`        | Texto interno. `""` = caixa vazia |
-| `ascii_art`      | `ascii_art`       | `true`/`True` = respeita `\n` sem word-wrap |
-| `bg_color`       | `cor_fundo`       | Cor de fundo ANSI. `NULL`/`None` = sem fundo |
-| `border_color`   | `cor_borda`       | Cor da borda ANSI |
-| `text_color`     | `cor_texto`       | Cor do texto ANSI |
-
-**Exemplo com arte ASCII (Python):**
-```python
-ui.desenhar_caixa(r,
-    x=5, y=1, altura=6, largura=20,
-    conteudo="  /\\_/\\\n ( o.o )\n  > ^ <",
-    ascii_art=True,
-    cor_fundo="\033[40m", cor_borda="\033[35m", cor_texto="\033[97m",
-)
-r.renderizar()
+```c
+// Caixa com arte ASCII (respeita as quebras de linha exatas)
+interface_draw(ui, r, 5, 1, 6, 20,
+    NULL,
+    "  /\\_/\\\n"
+    " ( o.o )\n"
+    "  > ^ <\n",
+    true,   // ascii_art = true
+    "\033[40m", "\033[35m", "\033[97m"
+);
+renderer_render(r);
 ```
 
 ### Caixa com texto animado (efeito máquina de escrever)
 
 ```c
-// C
+void interface_drawspeak(Interface* ui, Renderer* r,
+                         int x, int y, int height, int width,
+                         const char* title, const char* texto,
+                         const char* bg_color, const char* border_color, const char* text_color,
+                         float speed);
+```
+
+Exibe o texto dentro de uma caixa caractere por caractere, simulando uma máquina de escrever. Quando o texto excede `height` linhas, aguarda uma tecla para exibir a próxima página. Pressionar qualquer tecla pula a animação da página atual.
+
+| Parâmetro | Descrição |
+|-----------|-----------|
+| `speed`   | Tempo entre cada caractere em segundos. `0.03` é um bom valor. `0.0` exibe tudo de uma vez. |
+
+```c
 interface_drawspeak(ui, r, 2, 2, 4, 40,
     "NPC",
-    "Olá, aventureiro! Bem-vindo à vila de Pedra Alta.",
+    "Olá, aventureiro! Bem-vindo à vila de Pedra Alta. "
+    "Cuidado com os monstros na floresta ao norte.",
     "\033[40m", "\033[36m", "\033[97m",
-    0.04f
+    0.04f  // 40ms entre caracteres
 );
 ```
-
-```python
-# Python
-ui.desenhar_caixa_animada(r,
-    x=2, y=2, altura=4, largura=40,
-    titulo="NPC",
-    texto="Olá, aventureiro! Bem-vindo à vila de Pedra Alta.",
-    cor_fundo="\033[40m", cor_borda="\033[36m", cor_texto="\033[97m",
-    velocidade=0.04,
-)
-```
-
-Exibe o texto caractere por caractere. Quando excede `altura` linhas, aguarda tecla para a próxima página. Pressionar qualquer tecla pula a animação da página atual.
-
-| Parâmetro C | Parâmetro Python | Descrição |
-|-------------|-----------------|-----------|
-| `speed`     | `velocidade`    | Segundos por caractere. `0.03` = rápido, `0.1` = lento, `0.0` = imediato |
 
 ### Caixa com linhas pré-formatadas
 
 ```c
-// C
+void interface_drawline(Interface* ui, Renderer* r,
+                        int x, int y, int height, int width,
+                        const char* title, const char* text_line,
+                        const char* bg_color, const char* border_color, const char* text_color,
+                        const char* border_style);
+```
+
+Semelhante a `interface_draw`, mas respeita sempre os `\n` do texto (sem word-wrap) e permite escolher o estilo da borda.
+
+| Parâmetro      | Valores de `border_style` |
+|----------------|--------------------------|
+| `"single"`     | Borda simples: ┌─┐│└┘ |
+| Qualquer outro | Borda dupla: ╔═╗║╚╝ (padrão) |
+
+```c
+// Tabela simples com borda fina
 interface_drawline(ui, r, 2, 2, 4, 30,
     "Inventário",
     "Espada      x1\nPoção       x3\nChave       x1\nGold        320",
@@ -427,51 +336,36 @@ interface_drawline(ui, r, 2, 2, 4, 30,
 renderer_render(r);
 ```
 
-```python
-# Python
-ui.desenhar_linhas(r,
-    x=2, y=2, altura=4, largura=30,
-    titulo="Inventário",
-    linhas="Espada      x1\nPoção       x3\nChave       x1\nGold        320",
-    cor_fundo="\033[40m", cor_borda="\033[37m", cor_texto="\033[97m",
-    estilo_borda="single",
-)
-r.renderizar()
-```
-
-Respeita sempre os `\n` do texto (sem word-wrap). Escolha o estilo da borda:
-
-| Valor           | Estilo   | Caracteres |
-|-----------------|----------|------------|
-| `"single"`      | Simples  | ┌─┐│└┘     |
-| Qualquer outro  | Dupla    | ╔═╗║╚╝     |
-
 ### Texto animado sem caixa
 
 ```c
-// C
-interface_text_speak(ui, r, 5, 10,
-    "Carregando...\nPor favor aguarde.",
-    "\033[40m", "\033[93m", 0.05f
-);
-```
-
-```python
-# Python
-ui.texto_animado(r,
-    x=5, y=10,
-    texto="Carregando...\nPor favor aguarde.",
-    cor_fundo="\033[40m", cor_texto="\033[93m",
-    velocidade=0.05,
-)
+void interface_text_speak(Interface* ui, Renderer* r,
+                          int x, int y,
+                          const char* texto, const char* bg_color, const char* text_color,
+                          float speed);
 ```
 
 Exibe texto animado diretamente na tela, sem caixa. `\n` avança para a linha seguinte mantendo a coluna `x`. Pressionar qualquer tecla pula o restante.
 
+```c
+interface_text_speak(ui, r, 5, 10,
+    "Carregando...\nPor favor aguarde.",
+    "\033[40m", "\033[93m",
+    0.05f
+);
+```
+
 ### Texto estático posicionado
 
 ```c
-// C
+void interface_text_(Interface* ui, Renderer* r,
+                     int x, int y,
+                     const char* texto, const char* text_color, const char* bg_color);
+```
+
+Renderiza texto multilinha na posição `(x, y)` sem animação. Cada `\n` avança uma linha mantendo a coluna `x`. Strings `NULL` ou vazias nas cores desativam a sequência de cor.
+
+```c
 interface_text_(ui, r, 3, 15,
     "Pressione ENTER para continuar\nou ESC para sair.",
     "\033[90m", ""
@@ -479,172 +373,148 @@ interface_text_(ui, r, 3, 15,
 renderer_render(r);
 ```
 
-```python
-# Python
-ui.texto(r,
-    x=3, y=15,
-    texto="Pressione ENTER para continuar\nou ESC para sair.",
-    cor_texto="\033[90m",
-)
-r.renderizar()
-```
-
-Renderiza texto multilinha na posição `(x, y)` sem animação. Cada `\n` avança uma linha mantendo a coluna `x`.
-
 ---
 
-## Inputs / Entradas
+## Inputs
 
-O módulo `Inputs` / `Entradas` gerencia a leitura do teclado: campo de texto livre, menus verticais e horizontais, e leitura de teclas não-bloqueante.
+O módulo `Inputs` gerencia a leitura do teclado: campo de texto livre, menus verticais e horizontais, e leitura de teclas não-bloqueante.
 
-### Criação
+### Criação e destruição
 
 ```c
-// C
-Inputs* in = inputs_create();
-inputs_destroy(in);
+Inputs* inputs_create(void);
+void    inputs_destroy(Inputs* input);
 ```
 
-```python
-# Python
-en = tui.Entradas()
+```c
+Inputs* in = inputs_create();
+// ...
+inputs_destroy(in);
 ```
 
 ### Campo de texto
 
 ```c
-// C — retorna char* alocado: chame free() depois
+char* inputs_prompt(Inputs* input, Renderer* r,
+                    int x, int y, int max_len,
+                    const char* input_color);
+```
+
+Exibe um cursor na posição `(x, y)` e aguarda o usuário digitar. Suporta backspace e caracteres UTF-8. Ao pressionar Enter, retorna a string digitada.
+
+> **Importante:** A string retornada é alocada com `malloc`. Você deve chamar `free()` quando não precisar mais dela.
+
+| Parâmetro     | Descrição |
+|---------------|-----------|
+| `max_len`     | Número máximo de caracteres visíveis. `0` usa 255. |
+| `input_color` | Cor do texto digitado. `NULL` ou `""` para cor padrão. |
+
+```c
+renderer_add(r, "\033[97mNome do personagem: ");
+renderer_render(r);
+
 char* nome = inputs_prompt(in, r, 22, 5, 20, "\033[93m");
 // usa o nome...
 free(nome);
 ```
 
-```python
-# Python — retorna str Python, sem precisar de free()
-nome = en.prompt(r, x=22, y=5, tamanho_maximo=20, cor_entrada="\033[93m")
-```
-
-Exibe um cursor na posição `(x, y)` e aguarda o usuário digitar. Suporta backspace e UTF-8. Confirmado com Enter.
-
-| Parâmetro C   | Parâmetro Python  | Descrição |
-|---------------|-------------------|-----------|
-| `max_len`     | `tamanho_maximo`  | Máx. de caracteres visíveis. `0` = 255 |
-| `input_color` | `cor_entrada`     | Cor do texto digitado |
-
-> **C:** A string retornada é alocada com `malloc`. Você **deve** chamar `free()`.
-> **Python:** Retorna uma `str` normal, sem necessidade de liberação manual.
-
 ### Menu vertical
 
 ```c
-// C
+int inputs_menu_selector_vertical(Inputs* input, Renderer* r,
+                                  int x, int y,
+                                  char** options, int count,
+                                  const char* bg_normal, const char* fg_normal,
+                                  const char* bg_select, const char* fg_select,
+                                  const char* bg_correct, const char* fg_correct);
+```
+
+Exibe uma lista de opções navegável com as setas ↑↓. Retorna o índice da opção confirmada com Enter, ou `-1` se o usuário pressionar ESC.
+
+| Parâmetro    | Descrição |
+|--------------|-----------|
+| `options`    | Array de strings com as opções |
+| `count`      | Número de opções |
+| `bg_normal / fg_normal` | Cores dos itens não selecionados |
+| `bg_select / fg_select` | Cores do item em destaque |
+| `bg_correct / fg_correct` | Cores do item ao confirmar (feedback visual) |
+
+```c
 char* opcoes[] = { "Nova Partida", "Carregar", "Opções", "Sair" };
+
 int escolha = inputs_menu_selector_vertical(in, r,
-    10, 5, opcoes, 4,
-    "\033[40m", "\033[90m",
-    "\033[44m", "\033[97m",
-    "\033[42m", "\033[30m"
+    10, 5,
+    opcoes, 4,
+    "\033[40m", "\033[90m",    // normal: fundo preto, texto cinza
+    "\033[44m", "\033[97m",    // selecionado: fundo azul, texto branco
+    "\033[42m", "\033[30m"     // confirmado: fundo verde, texto preto
 );
+
+if (escolha == 3) {
+    // Sair
+}
 ```
-
-```python
-# Python
-opcoes = ["Nova Partida", "Carregar", "Opções", "Sair"]
-escolha = en.menu_vertical(r,
-    x=10, y=5,
-    opcoes=opcoes,
-    fundo_normal="\033[40m",      texto_normal="\033[90m",
-    fundo_selecionado="\033[44m", texto_selecionado="\033[97m",
-    fundo_confirmado="\033[42m",  texto_confirmado="\033[30m",
-)
-
-if escolha == 3:
-    pass  # Sair
-```
-
-Navega com ↑↓. Retorna o índice da opção confirmada com Enter, ou `-1` se ESC.
-
-| Parâmetros C               | Parâmetros Python                          | Descrição |
-|----------------------------|--------------------------------------------|-----------|
-| `bg_normal / fg_normal`    | `fundo_normal / texto_normal`              | Cores dos itens não selecionados |
-| `bg_select / fg_select`    | `fundo_selecionado / texto_selecionado`    | Cores do item em destaque |
-| `bg_correct / fg_correct`  | `fundo_confirmado / texto_confirmado`      | Cores ao confirmar (feedback visual) |
 
 ### Menu horizontal
 
 ```c
-// C
+int inputs_menu_selector_horizontal(Inputs* input, Renderer* r,
+                                    int x, int y,
+                                    char** options, int count,
+                                    const char* bg_normal, const char* fg_normal,
+                                    const char* bg_select, const char* fg_select,
+                                    const char* bg_correct, const char* fg_correct);
+```
+
+Igual ao menu vertical, mas as opções ficam lado a lado e a navegação é com ←→.
+
+```c
 char* sim_nao[] = { "Sim", "Não" };
+
 int resp = inputs_menu_selector_horizontal(in, r,
-    15, 10, sim_nao, 2,
+    15, 10,
+    sim_nao, 2,
     "\033[40m", "\033[90m",
     "\033[41m", "\033[97m",
     "\033[42m", "\033[30m"
 );
 ```
 
-```python
-# Python
-resp = en.menu_horizontal(r,
-    x=15, y=10,
-    opcoes=["Sim", "Não"],
-    fundo_normal="\033[40m",      texto_normal="\033[90m",
-    fundo_selecionado="\033[41m", texto_selecionado="\033[97m",
-    fundo_confirmado="\033[42m",  texto_confirmado="\033[30m",
-)
-```
-
-Igual ao menu vertical, mas as opções ficam lado a lado e a navegação é com ←→.
-
 ### Leitura de tecla sem bloqueio
 
 ```c
-// C — ideal para game loops
-const char* tecla = inputs_get_key();
-if (strcmp(tecla, "UP") == 0)  { /* move para cima */ }
-if (strcmp(tecla, "ESC") == 0) { /* sair */ }
+const char* inputs_get_key(void);
 ```
 
-```python
-# Python — ideal para game loops
-tecla = tui.Entradas.obter_tecla()
-if tecla == "UP":   ...  # move para cima
-if tecla == "ESC":  ...  # sair
-```
+Retorna o nome da tecla pressionada como string, ou `""` se nenhuma tecla estiver disponível. **Não bloqueia** — ideal para uso em game loops.
 
-**Não bloqueia** — retorna imediatamente `""` se nenhuma tecla estiver disponível.
+| Retorno possível | Tecla |
+|------------------|-------|
+| `"UP"`           | Seta para cima |
+| `"DOWN"`         | Seta para baixo |
+| `"LEFT"`         | Seta para esquerda |
+| `"RIGHT"`        | Seta para direita |
+| `"ENTER"`        | Enter |
+| `"BACKSPACE"`    | Backspace |
+| `"ESC"`          | Escape |
+| `"TAB"`          | Tab |
+| `"SPACE"`        | Espaço |
+| `"a"` … `"z"`   | Letra correspondente |
+| `""`             | Nenhuma tecla pressionada |
 
-| Retorno       | Tecla            |
-|---------------|------------------|
-| `"UP"`        | Seta para cima   |
-| `"DOWN"`      | Seta para baixo  |
-| `"LEFT"`      | Seta para esquerda |
-| `"RIGHT"`     | Seta para direita |
-| `"ENTER"`     | Enter            |
-| `"BACKSPACE"` | Backspace        |
-| `"ESC"`       | Escape           |
-| `"TAB"`       | Tab              |
-| `"SPACE"`     | Espaço           |
-| `"a"` … `"z"`| Letra correspondente |
-| `""`          | Nenhuma tecla    |
+```c
+// Game loop simples
+while (1) {
+    const char* tecla = inputs_get_key();
 
-**Exemplo — game loop em Python:**
-```python
-import tui, time
+    if (strcmp(tecla, "UP") == 0)    { /* move para cima */ }
+    if (strcmp(tecla, "DOWN") == 0)  { /* move para baixo */ }
+    if (strcmp(tecla, "ESC") == 0)   break;
 
-r  = tui.Renderizador()
-ui = tui.Interface()
-
-while True:
-    tecla = tui.Entradas.obter_tecla()
-
-    if tecla == "UP":    ...  # lógica de movimento
-    if tecla == "DOWN":  ...
-    if tecla == "ESC":   break
-
-    # redesenha a cena
-    r.renderizar()
-    time.sleep(0.016)   # ~60 fps
+    // desenha e renderiza...
+    renderer_render(r);
+    SLEEP_MS(16);  // ~60 fps
+}
 ```
 
 ---
@@ -653,31 +523,21 @@ while True:
 
 A TUI Guri usa sequências ANSI 256 cores, geradas a partir de valores hexadecimais `#RRGGBB`. Isso permite usar qualquer cor sem memorizar códigos ANSI.
 
-### Versões com buffer estático (mais convenientes)
+### Gravar em buffer externo
 
 ```c
-// C
-renderer_add(r, color_fg_s("#00FF88"));  // verde neon (foreground)
-renderer_add(r, color_bg_s("#0D0D0D"));  // quase preto (background)
-renderer_add(r, "Texto estiloso");
-renderer_add(r, C_RESET);
+void color_fg(char* buffer, const char* hex);  // cor do texto (foreground)
+void color_bg(char* buffer, const char* hex);  // cor de fundo (background)
 ```
 
-```python
-# Python
-r.adicionar(tui.sequencia_frente("#00FF88"))   # foreground
-r.adicionar(tui.sequencia_fundo("#0D0D0D"))    # background
-r.adicionar("Texto estiloso")
-r.adicionar("\033[0m")
-```
-
-### Gravar em buffer externo (C apenas)
+Escrevem a sequência ANSI no `buffer` fornecido. O buffer deve ter pelo menos `COLOR_STR_SIZE` (20) bytes.
 
 ```c
 char fg[COLOR_STR_SIZE];
 char bg[COLOR_STR_SIZE];
-color_fg(fg, "#FF6600");
-color_bg(bg, "#1A1A2E");
+
+color_fg(fg, "#FF6600");  // laranja
+color_bg(bg, "#1A1A2E");  // azul escuro
 
 renderer_add(r, fg);
 renderer_add(r, bg);
@@ -685,39 +545,52 @@ renderer_add(r, "Texto colorido");
 renderer_add(r, C_RESET);
 ```
 
+### Versões com buffer estático (mais convenientes)
+
+```c
+char* color_fg_s(const char* hex);
+char* color_bg_s(const char* hex);
+```
+
+Retornam a sequência em um buffer estático rotativo (4 slots). **Não precisa alocar buffer**, mas não use mais de 4 valores ao mesmo tempo numa única expressão.
+
+```c
+renderer_add(r, color_fg_s("#00FF88"));  // verde neon
+renderer_add(r, color_bg_s("#0D0D0D"));  // quase preto
+renderer_add(r, "Texto estiloso");
+renderer_add(r, C_RESET);
+```
+
 ### Obter índice ANSI 256
 
 ```c
-// C
+int color_hex_to_ansi_id(const char* hex);
+```
+
+Converte `#RRGGBB` para o índice inteiro (0–255) da paleta ANSI 256. Útil se você precisar montar sequências manualmente.
+
+```c
 int id = color_hex_to_ansi_id("#FF0000");  // ~196 (vermelho puro)
 char seq[32];
 sprintf(seq, "\033[38;5;%dm", id);
 ```
 
-```python
-# Python
-id = tui.cor_hex_para_id_ansi("#FF0000")   # ~196 (vermelho puro)
-seq = f"\033[38;5;{id}m"
-```
+### Constantes prontas
 
-### Constantes prontas (C)
+Definidas em `tui_api.h` para uso rápido:
 
 ```c
 C_RESET   // "\033[0m"  — reseta todas as cores e estilos
 C_BOLD    // "\033[1m"  — texto em negrito
 ```
 
-No Python, use as strings diretamente:
-```python
-RESET = "\033[0m"
-NEGRITO = "\033[1m"
-```
-
 ---
 
 ## Constantes e Teclas
 
-### Códigos de tecla unificados (C)
+### Códigos de tecla unificados
+
+Usados internamente pelos menus. Disponíveis para uso próprio com `get_unified_key` (função interna):
 
 ```c
 KEY_ENTER      // 13
@@ -732,23 +605,18 @@ KEY_RIGHT      // 77
 ### Sleep multiplataforma
 
 ```c
-// C
-SLEEP_MS(16);    // ~60 fps
-SLEEP_MS(33);    // ~30 fps
-SLEEP_MS(1000);  // 1 segundo
+SLEEP_MS(ms)  // dorme por `ms` milissegundos (funciona no Linux e Windows)
 ```
 
-```python
-# Python — use time.sleep()
-import time
-time.sleep(0.016)   # ~60 fps
-time.sleep(0.033)   # ~30 fps
-time.sleep(1.0)     # 1 segundo
+```c
+SLEEP_MS(16);   // ~60 fps
+SLEEP_MS(33);   // ~30 fps
+SLEEP_MS(1000); // 1 segundo
 ```
 
 ---
 
-## Referência rápida — C
+## Referência rápida
 
 ### Renderer
 
@@ -769,7 +637,7 @@ time.sleep(1.0)     # 1 segundo
 | `interface_create()` | Cria o módulo de interface |
 | `interface_destroy(ui)` | Libera o módulo |
 | `interface_visible_len(s)` | Conta caracteres visíveis (ignora ANSI) |
-| `interface_move_cursor(r, y, x)` | Posiciona cursor |
+| `interface_move_cursor(r, y, x)` | Posiciona cursor (mesma que renderer) |
 | `interface_clear(ui, r, x, y, h, w, bg)` | Limpa uma região da tela |
 | `interface_draw(...)` | Desenha caixa com borda dupla e texto |
 | `interface_drawspeak(...)` | Caixa com texto animado + paginação |
@@ -797,52 +665,3 @@ time.sleep(1.0)     # 1 segundo
 | `color_fg_s("#RRGGBB")` | Retorna sequência foreground (buffer estático) |
 | `color_bg_s("#RRGGBB")` | Retorna sequência background (buffer estático) |
 | `color_hex_to_ansi_id("#RRGGBB")` | Retorna índice ANSI 256 como `int` |
-
----
-
-## Referência rápida — Python
-
-### Renderizador
-
-| Método / Função | O que faz |
-|-----------------|-----------|
-| `tui.Renderizador()` | Cria o renderizador e ativa raw mode |
-| `r.adicionar(str)` | Adiciona string ao buffer |
-| `r.adicionar_bruto(bytes)` | Adiciona bytes brutos ao buffer |
-| `r.mover_cursor(linha, coluna)` | Posiciona o cursor |
-| `r.renderizar()` | Envia o buffer para o terminal |
-| `r.limpar_tudo()` | Limpa toda a tela |
-
-### Interface
-
-| Método | O que faz |
-|--------|-----------|
-| `tui.Interface()` | Cria o módulo de interface |
-| `ui.comprimento_visivel(str)` | Conta caracteres visíveis (ignora ANSI) |
-| `ui.mover_cursor(r, linha, col)` | Posiciona cursor |
-| `ui.limpar(r, x, y, altura, largura, cor_fundo)` | Limpa uma região da tela |
-| `ui.desenhar_caixa(r, ...)` | Caixa com borda dupla e texto |
-| `ui.desenhar_caixa_animada(r, ...)` | Caixa com texto animado + paginação |
-| `ui.desenhar_linhas(r, ...)` | Caixa com linhas exatas, borda single/dupla |
-| `ui.texto_animado(r, ...)` | Texto animado sem caixa |
-| `ui.texto(r, ...)` | Texto estático posicionado |
-
-### Entradas
-
-| Método | O que faz |
-|--------|-----------|
-| `tui.Entradas()` | Cria o módulo de entradas |
-| `en.prompt(r, x, y, ...)` | Campo de texto. Retorna `str` |
-| `en.menu_vertical(r, x, y, opcoes, ...)` | Menu com setas ↑↓. Retorna índice ou `-1` |
-| `en.menu_horizontal(r, x, y, opcoes, ...)` | Menu com setas ←→. Retorna índice ou `-1` |
-| `tui.Entradas.obter_tecla()` | Lê tecla sem bloquear. Retorna `str` do nome |
-
-### Cores
-
-| Função | O que faz |
-|--------|-----------|
-| `tui.sequencia_frente("#RRGGBB")` | Retorna sequência ANSI de foreground |
-| `tui.sequencia_fundo("#RRGGBB")` | Retorna sequência ANSI de background |
-| `tui.cor_hex_para_id_ansi("#RRGGBB")` | Retorna índice ANSI 256 como `int` |
-| `tui.cor_frente(bytearray, "#RRGGBB")` | Grava sequência foreground em bytearray |
-| `tui.cor_fundo(bytearray, "#RRGGBB")` | Grava sequência background em bytearray |
